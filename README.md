@@ -1,3 +1,145 @@
+# AI Task Manager
+
+Мини-проект на Laravel: задачи (CRUD через API) + демо AI‑генерации описания задачи через локальный Ollama.
+
+## Возможности
+
+- **API задач**: `GET/POST/PATCH/DELETE /api/tasks`
+- **AI‑генерация описания**: `POST /api/tasks/generate-description`
+- **Демо‑страница**: `GET /ai-demo` (форма + список задач)
+
+## Скриншот интерфейса
+
+![AI Demo UI](docs/ai-demo-ui.png)
+
+> Если картинка не отображается — добавьте файл `docs/ai-demo-ui.png` в репозиторий.
+
+## Требования
+
+- PHP (рекомендуется 8.2+)
+- Composer
+- Node.js + npm (если собираете фронт)
+- Любая поддерживаемая Laravel БД (SQLite/MySQL/PostgreSQL)
+- Ollama (для AI‑генерации)
+
+## Установка Ollama
+
+1. Установите Ollama с официального сайта: `https://ollama.com/`
+2. Запустите сервис:
+
+```bash
+ollama serve
+```
+
+3. Скачайте модель (используется в контроллере по умолчанию):
+
+```bash
+ollama pull llama3.2
+```
+
+Проверка, что Ollama живой:
+
+```bash
+curl http://localhost:11434/api/tags
+```
+
+## Настройка проекта
+
+Установите зависимости:
+
+```bash
+composer install
+```
+
+Если используете Vite/Tailwind через сборку:
+
+```bash
+npm install
+npm run build
+```
+
+### Настройка `.env`
+
+Создайте `.env` из примера:
+
+```bash
+cp .env.example .env
+```
+
+Сгенерируйте ключ приложения:
+
+```bash
+php artisan key:generate
+```
+
+Настройте подключение к БД в `.env` (например, SQLite):
+
+```env
+DB_CONNECTION=sqlite
+```
+
+Для SQLite обычно достаточно создать файл базы:
+
+```bash
+php -r "file_exists('database/database.sqlite') || touch('database/database.sqlite');"
+```
+
+## Запуск миграций
+
+```bash
+php artisan migrate
+```
+
+## Запуск приложения
+
+```bash
+php artisan serve
+```
+
+Откройте демо:
+
+- `http://localhost:8000/ai-demo`
+
+## Демо AI‑функции
+
+### Через UI
+
+1. Откройте `/ai-demo`
+2. Введите **название задачи**
+3. Нажмите **“Сгенерировать AI”** — поле **description** заполнится через API
+4. Нажмите **“Сохранить задачу”** — отправится `POST /api/tasks`, список обновится
+
+### Через API (пример)
+
+Генерация описания:
+
+```bash
+curl -X POST "http://localhost:8000/api/tasks/generate-description" ^
+  -H "Accept: application/json" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"title\":\"Подготовить отчёт по продажам\"}"
+```
+
+Создание задачи:
+
+```bash
+curl -X POST "http://localhost:8000/api/tasks" ^
+  -H "Accept: application/json" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"title\":\"Подготовить отчёт по продажам\",\"description\":\"...\",\"status\":\"pending\"}"
+```
+
+Получение списка:
+
+```bash
+curl -X GET "http://localhost:8000/api/tasks" -H "Accept: application/json"
+```
+
+## Примечания
+
+- AI‑эндпоинт использует Ollama на `http://localhost:11434`.
+- Если получаете **503** от AI‑эндпоинта — проверьте, что Ollama запущен и модель скачана.
+
 <p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
 
 <p align="center">
