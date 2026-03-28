@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>AI Демо — задачи</title>
     <script>
         (function () {
@@ -86,6 +87,24 @@
             box-shadow:
                 var(--shadow-deep),
                 inset 0 1px 0 rgb(255 255 255 / 0.06);
+        }
+
+        @keyframes toast-in {
+            from { opacity: 0; transform: translateY(12px) scale(0.98); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes toast-out {
+            from { opacity: 1; transform: translateY(0) scale(1); }
+            to { opacity: 0; transform: translateY(-8px) scale(0.98); }
+        }
+        .toast-animate-in {
+            animation: toast-in 0.38s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        }
+        .toast-animate-out {
+            animation: toast-out 0.28s ease forwards;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .toast-animate-in, .toast-animate-out { animation: none; }
         }
 
     </style>
@@ -269,6 +288,8 @@
     </main>
 </div>
 
+<div id="toastHost" class="pointer-events-none fixed bottom-6 left-1/2 z-[100] flex w-[min(92vw,22rem)] -translate-x-1/2 flex-col items-center gap-2 sm:bottom-8" aria-live="polite"></div>
+
 <script>
     const THEME_KEY = 'ai-demo-theme';
 
@@ -294,6 +315,54 @@
     const tasksListEl = document.getElementById('tasksList');
     const tasksEmptyEl = document.getElementById('tasksEmpty');
     const tasksMetaEl = document.getElementById('tasksMeta');
+    const toastHost = document.getElementById('toastHost');
+
+    /** @type {Array<Record<string, *>>} */
+    let tasksCache = [];
+
+    /** Защита от повторных DELETE по одной задаче (двойной клик, гонка ответов). */
+    const deleteInProgressIds = new Set();
+
+    function csrfToken() {
+        return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+    }
+
+    function showToast(message, variant = 'success') {
+        const el = document.createElement('div');
+        const base =
+            'pointer-events-auto w-full rounded-xl px-4 py-3 text-center text-sm font-medium shadow-lg ring-1 backdrop-blur-md toast-animate-in';
+        const variants = {
+            success:
+                'bg-emerald-50/95 text-emerald-900 ring-emerald-200/60 dark:bg-emerald-950/50 dark:text-emerald-100 dark:ring-emerald-400/35',
+            error:
+                'bg-rose-50/95 text-rose-900 ring-rose-200/60 dark:bg-rose-950/45 dark:text-rose-100 dark:ring-rose-400/40',
+            info: 'bg-sky-50/95 text-sky-900 ring-sky-200/60 dark:bg-sky-950/45 dark:text-sky-100 dark:ring-sky-400/35',
+        };
+        el.className = `${base} ${variants[variant] || variants.info}`;
+        el.textContent = message;
+        toastHost.appendChild(el);
+        window.setTimeout(() => {
+            el.classList.remove('toast-animate-in');
+            el.classList.add('toast-animate-out');
+            const remove = () => el.remove();
+            el.addEventListener('animationend', remove, { once: true });
+            window.setTimeout(remove, 400);
+        }, 2800);
+    }
+
+    function statusLabelRu(status) {
+        if (status === 'completed') return 'Выполнено';
+        if (status === 'in_progress') return 'В работе';
+        return 'Ожидает';
+    }
+
+    function setAiStatusButtonLoading(btn, loading) {
+        const label = btn.querySelector('.ai-status-btn-label');
+        const spin = btn.querySelector('.ai-status-btn-spinner');
+        btn.disabled = !!loading;
+        if (label) label.classList.toggle('hidden', loading);
+        if (spin) spin.classList.toggle('hidden', !loading);
+    }
 
     function setTheme(isDark) {
         const root = document.documentElement;
@@ -363,23 +432,15 @@
         statusEl.textContent = message;
         statusEl.dataset.kind = kind;
 
-        statusEl.className =
+        const base =
             'max-w-full rounded-xl px-4 py-3 text-sm backdrop-blur-xl sm:max-w-[52%] sm:truncate ring-1 shadow-lg';
+        // classList.add() нельзя вызывать с одной строкой из нескольких классов — в браузере это InvalidCharacterError.
         if (kind === 'success') {
-            statusEl.classList.add(
-                'bg-emerald-50/80 text-emerald-900/95 ring-emerald-300/60 shadow-emerald-500/10',
-                'dark:bg-deep-card/55 dark:text-deep-text dark:ring-deep-success/45 dark:shadow-[0_0_24px_-6px_rgb(52_211_153/0.35)]'
-            );
+            statusEl.className = `${base} bg-emerald-50/80 text-emerald-900/95 ring-emerald-300/60 shadow-emerald-500/10 dark:bg-deep-card/55 dark:text-deep-text dark:ring-deep-success/45 dark:shadow-[0_0_24px_-6px_rgb(52_211_153/0.35)]`;
         } else if (kind === 'error') {
-            statusEl.classList.add(
-                'bg-rose-50/80 text-rose-900/95 ring-rose-300/55 shadow-rose-500/10',
-                'dark:bg-deep-card/55 dark:text-deep-text dark:ring-deep-danger/45 dark:shadow-[0_0_24px_-6px_rgb(251_113_133/0.35)]'
-            );
+            statusEl.className = `${base} bg-rose-50/80 text-rose-900/95 ring-rose-300/55 shadow-rose-500/10 dark:bg-deep-card/55 dark:text-deep-text dark:ring-deep-danger/45 dark:shadow-[0_0_24px_-6px_rgb(251_113_133/0.35)]`;
         } else {
-            statusEl.classList.add(
-                'bg-cyan-50/70 text-stone-800 ring-cyan-200/55 shadow-cyan-500/8',
-                'dark:bg-deep-card/50 dark:text-deep-muted dark:ring-deep-brand/45 dark:shadow-[0_0_28px_-8px_rgb(34_211_238/0.25)]'
-            );
+            statusEl.className = `${base} bg-cyan-50/70 text-stone-800 ring-cyan-200/55 shadow-cyan-500/8 dark:bg-deep-card/50 dark:text-deep-muted dark:ring-deep-brand/45 dark:shadow-[0_0_28px_-8px_rgb(34_211_238/0.25)]`;
         }
     }
 
@@ -390,21 +451,21 @@
     }
 
     function badgeForStatus(status) {
-        const base = 'inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 transition-colors duration-200';
+        const base = 'task-status-badge inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 transition-colors duration-300';
         if (status === 'completed') {
             return {
-                cls: `${base} bg-emerald-50/95 text-emerald-800 shadow-sm shadow-emerald-500/10 ring-emerald-300/55 dark:bg-deep-success/12 dark:text-deep-text dark:shadow-[0_0_16px_-4px_rgb(52_211_153/0.35)] dark:ring-deep-success/35`,
+                cls: `${base} bg-emerald-100 text-emerald-900 ring-emerald-300/80 shadow-sm dark:bg-emerald-500/20 dark:text-emerald-50 dark:ring-emerald-400/50 dark:shadow-[0_0_14px_-4px_rgb(52_211_153/0.45)]`,
                 label: 'Выполнено',
             };
         }
         if (status === 'in_progress') {
             return {
-                cls: `${base} bg-cyan-50/95 text-cyan-900 ring-cyan-300/50 shadow-sm shadow-cyan-400/15 dark:bg-deep-brand/18 dark:text-cyan-50 dark:shadow-[0_0_18px_-4px_rgb(34_211_238/0.45)] dark:ring-deep-brand/40`,
+                cls: `${base} bg-blue-100 text-blue-900 ring-blue-300/80 shadow-sm dark:bg-blue-500/25 dark:text-blue-50 dark:ring-blue-400/50 dark:shadow-[0_0_14px_-4px_rgb(59_130_246/0.45)]`,
                 label: 'В работе',
             };
         }
         return {
-            cls: `${base} bg-stone-100/90 text-stone-700 ring-stone-200/65 dark:bg-white/[0.08] dark:text-deep-text dark:ring-white/15 dark:shadow-[0_0_14px_-6px_rgb(244_114_182/0.2)]`,
+            cls: `${base} bg-amber-100 text-amber-950 ring-amber-300/80 shadow-sm dark:bg-amber-400/20 dark:text-amber-50 dark:ring-amber-400/45 dark:shadow-[0_0_14px_-4px_rgb(251_191_36/0.4)]`,
             label: 'Ожидает',
         };
     }
@@ -419,8 +480,9 @@
     }
 
     function renderTasks(tasks) {
+        tasksCache = Array.isArray(tasks) ? tasks : [];
         tasksListEl.innerHTML = '';
-        const count = Array.isArray(tasks) ? tasks.length : 0;
+        const count = tasksCache.length;
         tasksMetaEl.textContent = `Найдено задач: ${count}`;
 
         if (!count) {
@@ -429,23 +491,185 @@
         }
         tasksEmptyEl.classList.add('hidden');
 
-        for (const t of tasks) {
+        for (const t of tasksCache) {
             const b = badgeForStatus(t.status);
             const el = document.createElement('div');
             el.className =
                 'task-card-interactive cursor-default rounded-lg rounded-tl-md border border-cyan-200/45 bg-white/65 p-4 shadow-md shadow-cyan-500/10 ring-1 ring-white/90 backdrop-blur-md hover:border-cyan-300/70 hover:shadow-xl hover:shadow-cyan-400/15 dark:border-deep-brand/25 dark:bg-deep-card/65 dark:ring-deep-brand/15 dark:backdrop-blur-xl dark:hover:border-deep-brand2/40 dark:hover:shadow-[0_0_32px_-10px_rgb(34_211_238/0.35),0_0_24px_-12px_rgb(244_114_182/0.2)] dark:hover:ring-deep-brand/35';
             el.innerHTML = `
-                <div class="flex items-start justify-between gap-4">
-                    <div class="min-w-0">
-                        <div class="truncate text-sm font-semibold text-stone-800 dark:text-deep-text">${escapeHtml(t.title)}</div>
-                        <div class="mt-1 whitespace-pre-wrap text-sm text-stone-600 dark:text-deep-muted">${escapeHtml(t.description || '')}</div>
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div class="min-w-0 flex-1">
+                        <div class="flex flex-wrap items-start justify-between gap-2">
+                            <div class="truncate text-sm font-semibold text-stone-800 dark:text-deep-text">${escapeHtml(t.title)}</div>
+                            <div class="${b.cls}" data-role="task-status-badge">${b.label}</div>
+                        </div>
+                        <div class="mt-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
+                            <div class="min-w-0 flex-1 whitespace-pre-wrap text-sm text-stone-600 dark:text-deep-muted">${escapeHtml(t.description || '')}</div>
+                            <div class="flex shrink-0 flex-col gap-2 self-stretch sm:flex-row sm:items-start sm:gap-2">
+                                <button type="button" class="ai-status-btn relative inline-flex min-h-[40px] min-w-[10.5rem] shrink-0 items-center justify-center gap-2 self-start rounded-lg border border-cyan-200/45 bg-white/85 px-3 py-2 text-xs font-semibold text-stone-700 ring-1 ring-cyan-200/50 backdrop-blur-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-65 dark:border-deep-brand/35 dark:bg-white/10 dark:text-deep-muted dark:ring-deep-brand/25 dark:hover:bg-white/15" data-task-id="${String(t.id)}">
+                                    <span class="ai-status-btn-label">🤖 AI статус</span>
+                                    <span class="ai-status-btn-spinner hidden h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-cyan-200/80 border-t-cyan-600 dark:border-white/25 dark:border-t-deep-brand" aria-hidden="true"></span>
+                                </button>
+                                <button type="button" class="task-delete-btn inline-flex min-h-[40px] shrink-0 items-center justify-center gap-1.5 self-start rounded-lg border border-rose-200/80 bg-white/85 px-3 py-2 text-xs font-semibold text-rose-600 ring-1 ring-rose-200/60 backdrop-blur-sm transition hover:bg-rose-50 hover:text-rose-700 dark:border-rose-500/35 dark:bg-white/10 dark:text-rose-400 dark:ring-rose-500/25 dark:hover:bg-rose-950/40 dark:hover:text-rose-300" data-task-id="${String(t.id)}" aria-label="Удалить задачу">
+                                    <span class="text-[1.05rem] leading-none" aria-hidden="true">❌</span>
+                                    <span>Удалить</span>
+                                </button>
+                            </div>
+                        </div>
                     </div>
-                    <div class="${b.cls}">${b.label}</div>
                 </div>
             `;
             tasksListEl.appendChild(el);
         }
     }
+
+    async function suggestAiStatusForTask(taskId, triggerBtn) {
+        if (!triggerBtn) return;
+
+        const task = tasksCache.find((x) => String(x.id) === String(taskId));
+        if (!task) {
+            showToast('Задача не найдена', 'error');
+            return;
+        }
+
+        const btn = triggerBtn;
+
+        setAiStatusButtonLoading(btn, true);
+        hideStatus();
+
+        try {
+            const suggestRes = await fetch('/tasks/suggest-status', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    'X-CSRF-TOKEN': csrfToken(),
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                body: JSON.stringify({
+                    title: task.title,
+                    description: task.description ?? '',
+                }),
+            });
+
+            const suggestPayload = await suggestRes.json().catch(() => ({}));
+            if (!suggestRes.ok) {
+                const msg =
+                    suggestPayload?.error ||
+                    suggestPayload?.message ||
+                    `Ошибка AI (HTTP ${suggestRes.status})`;
+                showToast(msg, 'error');
+                showStatus(msg, 'error');
+                return;
+            }
+
+            const newStatus = suggestPayload?.status;
+            if (!newStatus) {
+                showToast('Ответ без статуса', 'error');
+                return;
+            }
+
+            const putRes = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                },
+                body: JSON.stringify({ status: newStatus }),
+            });
+
+            const putPayload = await putRes.json().catch(() => ({}));
+            if (!putRes.ok) {
+                const msg =
+                    putPayload?.message ||
+                    (putPayload?.errors ? Object.values(putPayload.errors).flat().join(' ') : null) ||
+                    `Ошибка сохранения (HTTP ${putRes.status})`;
+                showToast(msg, 'error');
+                showStatus(msg, 'error');
+                return;
+            }
+
+            const prevStatus = task.status;
+            const idx = tasksCache.findIndex((x) => String(x.id) === String(taskId));
+            if (idx >= 0) {
+                tasksCache[idx] = { ...tasksCache[idx], ...putPayload };
+            }
+            renderTasks(tasksCache);
+
+            const oldLabel = statusLabelRu(prevStatus);
+            const newLabel = statusLabelRu(newStatus);
+            showToast(`Статус обновлён: ${oldLabel} → ${newLabel}`, 'success');
+            showStatus('Статус сохранён', 'success');
+        } catch {
+            showToast('Сеть или сервер недоступны', 'error');
+            showStatus('Не удалось выполнить запрос', 'error');
+        } finally {
+            if (btn && btn.isConnected) {
+                setAiStatusButtonLoading(btn, false);
+            }
+        }
+    }
+
+    async function deleteTask(taskId, triggerBtn) {
+        const key = String(taskId);
+        if (deleteInProgressIds.has(key)) {
+            return;
+        }
+        if (!window.confirm('Удалить эту задачу?')) {
+            return;
+        }
+        if (deleteInProgressIds.has(key)) {
+            return;
+        }
+        deleteInProgressIds.add(key);
+
+        if (triggerBtn) {
+            triggerBtn.disabled = true;
+            triggerBtn.setAttribute('aria-busy', 'true');
+        }
+
+        hideStatus();
+        try {
+            const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
+                method: 'DELETE',
+                headers: { Accept: 'application/json' },
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                const msg = payload?.message || `Ошибка удаления (HTTP ${res.status})`;
+                showToast(msg, 'error');
+                showStatus(msg, 'error');
+                return;
+            }
+            tasksCache = tasksCache.filter((x) => String(x.id) !== String(taskId));
+            renderTasks(tasksCache);
+            showToast('Задача удалена', 'success');
+            showStatus('Задача удалена', 'success');
+        } catch {
+            showToast('Не удалось удалить задачу', 'error');
+            showStatus('Не удалось удалить задачу', 'error');
+        } finally {
+            deleteInProgressIds.delete(key);
+            if (triggerBtn && triggerBtn.isConnected) {
+                triggerBtn.disabled = false;
+                triggerBtn.removeAttribute('aria-busy');
+            }
+        }
+    }
+
+    tasksListEl.addEventListener('click', (e) => {
+        const delBtn = e.target.closest('.task-delete-btn');
+        if (delBtn) {
+            if (delBtn.disabled) return;
+            const id = delBtn.getAttribute('data-task-id');
+            if (id != null && id !== '') deleteTask(id, delBtn);
+            return;
+        }
+        const trigger = e.target.closest('.ai-status-btn');
+        if (!trigger || trigger.disabled) return;
+        const id = trigger.getAttribute('data-task-id');
+        if (id != null && id !== '') suggestAiStatusForTask(id, trigger);
+    });
 
     async function fetchTasks() {
         try {

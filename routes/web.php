@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\TaskController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -9,3 +10,5 @@ Route::get('/', function () {
 Route::get('/ai-demo', function () {
     return view('ai-demo');
 });
+
+Route::post('/tasks/suggest-status', [TaskController::class, 'suggestStatus']);
